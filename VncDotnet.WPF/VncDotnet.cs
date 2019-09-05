@@ -28,15 +28,10 @@ namespace VncDotnet.WPF
 
         private WriteableBitmap? Bitmap;
 
-        public override void OnApplyTemplate()
-        {
-            _ = Start();
-        }
 
-        private async Task Start()
+        public async Task ConnectAsync(string host, int port, string password, IEnumerable<SecurityType> securityTypes)
         {
-            //var client = await RfbConnection.ConnectAsync("10.128.1.104", 5900, "asdf", RfbConnection.SupportedSecurityTypes);
-            var client = await RfbConnection.ConnectAsync("192.168.178.20", 5900, "asdf", RfbConnection.SupportedSecurityTypes);
+            var client = await RfbConnection.ConnectAsync(host, port, password, securityTypes);
             client.OnVncUpdate += Client_OnVncUpdate;
             client.OnResolutionUpdate += Client_OnResolutionUpdate;
             client.Start();

@@ -12,6 +12,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
+using VncDotnet;
 
 namespace Demo.WPF
 {
@@ -23,6 +24,13 @@ namespace Demo.WPF
         public MainWindow()
         {
             InitializeComponent();
+            this.Loaded += MainWindow_Loaded;
+        }
+
+        private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            //await MyVncElement.ConnectAsync("10.128.1.104", 5900, "asdf", RfbConnection.SupportedSecurityTypes);
+            await MyVncElement.ConnectAsync("192.168.178.20", 5900, "asdf", RfbConnection.SupportedSecurityTypes);
         }
     }
 }
