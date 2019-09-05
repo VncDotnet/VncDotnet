@@ -69,7 +69,7 @@ namespace VncDotnet
             ServerInitMessage = serverInitMessage;
         }
 
-        private async Task WriteFramebufferUpdateRequest(ushort x, ushort y, ushort width, ushort height, bool incremental)
+        private Task WriteFramebufferUpdateRequest(ushort x, ushort y, ushort width, ushort height, bool incremental)
         {
             var buf = new byte[10];
             buf[0] = (byte) RfbClientMessageType.FramebufferUpdateRequest;
@@ -78,7 +78,7 @@ namespace VncDotnet
             BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(4, 2), y);
             BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(6, 2), width);
             BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(8, 2), height);
-            await Tcp.Client.SendAsync(buf, SocketFlags.None);
+            return Tcp.Client.SendAsync(buf, SocketFlags.None);
         }
 
         private async Task<int> ParseFramebufferUpdateHeader()
@@ -135,7 +135,7 @@ namespace VncDotnet
                             rectangles[i] = await ParseRectangle(ServerInitMessage.PixelFormat);
                         }
                         Debug.WriteLine($"{stopWatch.Elapsed} (ParseRectangles finished)");
-                        await Task.Run(() => OnVncUpdate?.Invoke(rectangles));
+                        OnVncUpdate?.Invoke(rectangles);
                         Debug.WriteLine($"{stopWatch.Elapsed} (OnVncUpdate finished)");
                         break;
                     case RfbServerMessageType.Bell:
