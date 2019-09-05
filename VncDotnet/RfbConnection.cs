@@ -81,28 +81,20 @@ namespace VncDotnet
             await Tcp.Client.SendAsync(buf, SocketFlags.None);
         }
 
-        private async Task<RfbServerMessageType> ParseServerMessageType()
-        {
-            ReadResult result = await IncomingPacketsPipe.Reader.ReadAsync();
-            var type = result.Buffer.First.Span[0];
-            IncomingPacketsPipe.Reader.AdvanceTo(result.Buffer.GetPosition(1));
-            return (RfbServerMessageType) type;
-        }
-
         private async Task<int> ParseFramebufferUpdateHeader()
         {
-            ReadResult result = await ReadMinBytesAsync(IncomingPacketsPipe.Reader, 3);
-            var rectanglesCount = BinaryPrimitives.ReadUInt16BigEndian(GetSpan(result.Buffer, 3).Slice(1, 2));
+            ReadResult result = await IncomingPacketsPipe.Reader.ReadMinBytesAsync(3);
+            var rectanglesCount = BinaryPrimitives.ReadUInt16BigEndian(result.Buffer.Slice(1, 2).ToArray());
             IncomingPacketsPipe.Reader.AdvanceTo(result.Buffer.GetPosition(3));
             return rectanglesCount;
         }
 
         private async Task<(RfbRectangleHeader, byte[])> ParseRectangle(PixelFormat format)
         {
-            ReadResult result = await ReadMinBytesAsync(IncomingPacketsPipe.Reader, 12);
-            var header = ParseRectangleHeader(GetSpan(result.Buffer, 12));
+            ReadResult result = await IncomingPacketsPipe.Reader.ReadMinBytesAsync(12);
+            var header = ParseRectangleHeader(result.Buffer.Slice(0, 12).ToArray());
             IncomingPacketsPipe.Reader.AdvanceTo(result.Buffer.GetPosition(12));
-            //Debug.WriteLine($"rect {header}");
+            Debug.WriteLine($"Rectangle {header}");
             return header.Encoding switch
             {
                 RfbEncoding.ZRLE => (header, await ZRLEEncoding.ParseRectangle(IncomingPacketsPipe.Reader, header)),
@@ -123,30 +115,28 @@ namespace VncDotnet
         public async Task Loop()
         {
             OnResolutionUpdate?.Invoke(ServerInitMessage.FramebufferWidth, ServerInitMessage.FramebufferHeight);
-            var updateTimeWatch = new Stopwatch();
-            var waitTimeWatch = new Stopwatch();
+            var stopWatch = new Stopwatch();
             await WriteFramebufferUpdateRequest(0, 0, ServerInitMessage.FramebufferWidth, ServerInitMessage.FramebufferHeight, false);
             while (true)
             {
-                var messageType = await ParseServerMessageType();
+                stopWatch.Restart();
+                var messageType = (RfbServerMessageType) await IncomingPacketsPipe.Reader.ReadByteAsync();
+                Debug.WriteLine($"{stopWatch.Elapsed} (ParseServerMessageType finished)");
                 switch (messageType)
                 {
                     case RfbServerMessageType.FramebufferUpdate:
-                        updateTimeWatch.Restart();
-                        waitTimeWatch.Stop();
-                        //Debug.WriteLine($"Wait time {waitTimeWatch.Elapsed}");
+                        await WriteFramebufferUpdateRequest(0, 0, ServerInitMessage.FramebufferWidth, ServerInitMessage.FramebufferHeight, true);
+                        Debug.WriteLine($"{stopWatch.Elapsed} (WriteFramebufferUpdateRequest finished)");
                         var rectanglesCount = await ParseFramebufferUpdateHeader();
+                        Debug.WriteLine($"{stopWatch.Elapsed} (ParseFramebufferUpdateHeader finished)");
                         var rectangles = new (RfbRectangleHeader, byte[])[rectanglesCount];
-                        //Debug.WriteLine($"FramebufferUpdate with {rectanglesCount} rectangles");
                         for (var i = 0; i < rectanglesCount; ++i)
                         {
                             rectangles[i] = await ParseRectangle(ServerInitMessage.PixelFormat);
                         }
+                        Debug.WriteLine($"{stopWatch.Elapsed} (ParseRectangles finished)");
                         await Task.Run(() => OnVncUpdate?.Invoke(rectangles));
-                        updateTimeWatch.Stop();
-                        //Debug.WriteLine($"FramebufferUpdate ({rectanglesCount} rects) took {updateTimeWatch.Elapsed}");
-                        waitTimeWatch.Restart();
-                        await WriteFramebufferUpdateRequest(0, 0, ServerInitMessage.FramebufferWidth, ServerInitMessage.FramebufferHeight, true);
+                        Debug.WriteLine($"{stopWatch.Elapsed} (OnVncUpdate finished)");
                         break;
                     case RfbServerMessageType.Bell:
                         Debug.WriteLine($"BELL");
@@ -164,8 +154,8 @@ namespace VncDotnet
 
         private async Task ParseServerCutText()
         {
-            ReadResult result = await ReadMinBytesAsync(IncomingPacketsPipe.Reader, 7);
-            var length = BinaryPrimitives.ReadUInt32BigEndian(GetSpan(result.Buffer, 7).Slice(3, 4));
+            ReadResult result = await IncomingPacketsPipe.Reader.ReadMinBytesAsync(7);
+            var length = BinaryPrimitives.ReadUInt32BigEndian(result.Buffer.Slice(3, 4).ToArray());
             IncomingPacketsPipe.Reader.AdvanceTo(result.Buffer.GetPosition(7));
             long remaining = length;
             StringBuilder builder = new StringBuilder();
@@ -192,33 +182,6 @@ namespace VncDotnet
                 IncomingPacketsPipe.Reader.AdvanceTo(result.Buffer.GetPosition(read));
             }
             Debug.WriteLine($"ParseServerCutText {builder.ToString()}");
-        }
-
-        //[MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private async Task<ReadResult> ReadMinBytesAsync(PipeReader reader, int bytes)
-        {
-            while (true)
-            {
-                ReadResult result = await IncomingPacketsPipe.Reader.ReadAsync();
-                if (result.Buffer.Length >= bytes)
-                {
-                    return result;
-                }
-                reader.AdvanceTo(result.Buffer.Start, result.Buffer.End);
-            }
-        }
-
-        //[MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private ReadOnlySpan<byte> GetSpan(ReadOnlySequence<byte> sequence, int length)
-        {
-            if (length > sequence.Length)
-                throw new InvalidOperationException();
-
-            if (sequence.First.Length >= length)
-                return sequence.First.Span;
-
-            var slice = sequence.Slice(0, length);
-            return slice.ToArray();
         }
     }
 }

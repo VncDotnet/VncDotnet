@@ -211,7 +211,7 @@ namespace VncDotnet
         {
             while (true)
             {
-                Memory<byte> memory = writer.GetMemory(4096);
+                Memory<byte> memory = writer.GetMemory(256 * 1024);
                 try
                 {
                     int bytesRead = await socket.ReceiveAsync(memory, SocketFlags.None);
