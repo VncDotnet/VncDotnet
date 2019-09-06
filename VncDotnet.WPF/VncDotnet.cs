@@ -77,8 +77,7 @@ namespace VncDotnet.WPF
                         }
                     }
 
-                    Bitmap.DrawRectangle(0, 0, 16, 16, Colors.Black);
-                    Bitmap.DrawLineAa(10, 20, 50, 70, Colors.Blue, 5);
+                    Bitmap.DrawRectangle(0, 0, 64, 64, Colors.GreenYellow);
                     Bitmap.AddDirtyRect(new Int32Rect(0, 0, Bitmap.PixelWidth, Bitmap.PixelHeight));
                     Bitmap.Unlock();
                 }

@@ -31,7 +31,7 @@ namespace VncDotnet
     public partial class RfbConnection
     {
         public static readonly SecurityType[] SupportedSecurityTypes = new SecurityType[] { SecurityType.None, SecurityType.VncAuthentication };
-        public static readonly RfbEncoding[] SupportedEncodings = new RfbEncoding[] { RfbEncoding.Raw };
+        public static readonly RfbEncoding[] SupportedEncodings = new RfbEncoding[] { RfbEncoding.ZRLE, RfbEncoding.Raw };
 
         public static async Task<RfbConnection> ConnectAsync(string host, int port, string password, IEnumerable<SecurityType> securityTypes)
         {
