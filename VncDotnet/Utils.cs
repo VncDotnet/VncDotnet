@@ -73,6 +73,59 @@ namespace VncDotnet
         {
             return ForceGetReadOnlySpan(sequence, 0, length);
         }
+
+        public static async Task Foreach(this PipeReader reader, int elementSize, int elementCount, Action<ReadOnlyMemory<byte>> handler)
+        {
+            while (elementCount > 0)
+            {
+                var result = await reader.ReadAsync();
+                byte[]? remainder = null;
+                int read = 0;
+                foreach (var segment in result.Buffer)
+                {
+                    if (elementCount == 0)
+                        break;
+                    int s = 0;
+                    if (remainder != null)
+                    {
+                        if (remainder.Length + segment.Length < elementSize) // segment + remainder not big enough
+                        {
+                            var newRemainder = new byte[remainder.Length + segment.Length];
+                            remainder.CopyTo(newRemainder, 0);
+                            segment.CopyTo(newRemainder.AsMemory(remainder.Length));
+                            continue;
+                        }
+                        else // segment + remainder big enough
+                        {
+                            var danglingElement = new byte[elementSize];
+                            remainder.CopyTo(danglingElement, 0);
+                            segment.Span.Slice(0, elementSize - remainder.Length).CopyTo(danglingElement.AsSpan(remainder.Length));
+                            handler(danglingElement);
+                            elementCount--;
+                            read += elementSize;
+                            s = elementSize - remainder.Length;
+                            remainder = null;
+                        }
+                    }
+                    while (elementCount > 0)
+                    {
+                        if (s + elementSize <= segment.Length) // segment big enough
+                        {
+                            handler(segment.Slice(s, elementSize));
+                            elementCount--;
+                            read += elementSize;
+                            s += elementSize;
+                        }
+                        else // segment not big enough
+                        {
+                            remainder = segment.Slice(s).ToArray();
+                            break;
+                        }
+                    }
+                }
+                reader.AdvanceTo(result.Buffer.GetPosition(read));
+            }
+        }
     }
 
     internal static class ReadOnlySequenceExcensions

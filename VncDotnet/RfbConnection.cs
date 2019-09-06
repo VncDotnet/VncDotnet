@@ -94,10 +94,10 @@ namespace VncDotnet
             ReadResult result = await IncomingPacketsPipe.Reader.ReadMinBytesAsync(12);
             var header = ParseRectangleHeader(result.Buffer.Slice(0, 12).ToArray());
             IncomingPacketsPipe.Reader.AdvanceTo(result.Buffer.GetPosition(12));
-            Debug.WriteLine($"Rectangle {header}");
+            //Debug.WriteLine($"Rectangle {header}");
             return header.Encoding switch
             {
-                RfbEncoding.ZRLE => (header, await ZRLEEncoding.ParseRectangle(IncomingPacketsPipe.Reader, header)),
+                RfbEncoding.ZRLE => (header, await ZRLEEncoding.ParseRectangle(IncomingPacketsPipe.Reader, header, format)),
                 RfbEncoding.Raw => (header, await RawEncoding.ParseRectangle(IncomingPacketsPipe.Reader, header, format)),
                 _ => throw new Exception($"unknown enc {header.Encoding}"),
             };

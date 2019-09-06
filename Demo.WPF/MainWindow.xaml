@@ -6,7 +6,7 @@
         xmlns:local="clr-namespace:Demo.WPF"
         xmlns:wpf="clr-namespace:VncDotnet.WPF;assembly=VncDotnet.WPF"
         mc:Ignorable="d"
-        Title="MainWindow" Height="1800" Width="900">
+        Title="MainWindow" Width="960" Height="560">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
