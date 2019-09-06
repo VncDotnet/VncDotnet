@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.IO.Pipelines;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Tasks;
 using VncDotnet;
@@ -25,10 +26,11 @@ namespace VncDotnet.Encodings
             InflateOutputStream = new DeflateStream(InflateInputStream, CompressionMode.Decompress);
         }
 
-        public async Task<byte[]> ParseRectangle(PipeReader reader, RfbRectangleHeader header)
+        public async Task<byte[]> ParseRectangle(PipeReader reader, RfbRectangleHeader header, PixelFormat format)
         {
+            Debug.Assert(format.BitsPerPixel == 32);
             var ZRLEPipe = new Pipe();
-            var parser = Task.Run(async () => await ParsePixelData(ZRLEPipe.Reader, header));
+            var parser = Task.Run(() => ParsePixelData(ZRLEPipe.Reader, header));
 
             // read compressed length
             var result = await reader.ReadMinBytesAsync(4);
@@ -52,13 +54,13 @@ namespace VncDotnet.Encodings
                 {
                     if (remaining > segment.Length)
                     {
-                        Decompress(ZRLEPipe.Writer, segment.Span);
+                        await Decompress(ZRLEPipe.Writer, segment);
                         decompressed += segment.Length;
                         remaining -= segment.Length;
                     }
                     else
                     {
-                        Decompress(ZRLEPipe.Writer, segment.Span.Slice(0, (int)remaining));
+                        await Decompress(ZRLEPipe.Writer, segment.Slice(0, (int)remaining));
                         decompressed += remaining;
                         remaining -= remaining;
                         break;
@@ -69,9 +71,11 @@ namespace VncDotnet.Encodings
             ZRLEPipe.Writer.Complete();
             return await parser;
         }
+
         private async Task<byte[]> ParsePixelData(PipeReader uncompressedReader, RfbRectangleHeader header)
         {
             byte[] data = ArrayPool<byte>.Shared.Rent(header.Width * header.Height * 4);
+            Array.Clear(data, 0, data.Length);
             for (var y = 0; y < header.Height; y += 64)
             {
                 var tileHeight = Math.Min(header.Height - y, 64);
@@ -85,15 +89,7 @@ namespace VncDotnet.Encodings
 
                     if (subencoding == 0) // Raw
                     {
-                        for (int ty = 0; ty < tileHeight; ty++)
-                        {
-                            for (int tx = 0; tx < tileWidth; tx++)
-                            {
-                                result = await uncompressedReader.ReadMinBytesAsync(3);
-                                ParseRaw(result, y, x, ty, tx, data, header.Width);
-                                uncompressedReader.AdvanceTo(result.Buffer.GetPosition(3));
-                            }
-                        }
+                        await ParseRawTile(uncompressedReader, data, x, y, tileWidth, tileHeight, header.Width);
                     }
                     else if (subencoding == 1) // Solid
                     {
@@ -112,77 +108,19 @@ namespace VncDotnet.Encodings
                     }
                     else if (subencoding <= 16) // Packed Palette
                     {
-                        var palette = new byte[subencoding][];
-                        var bitfieldLength = GetPackedPixelBitFieldLength(subencoding);
-                        for (int i = 0; i < subencoding; i++)
-                        {
-                            palette[i] = await ParseCompressedPixel(uncompressedReader);
-                        }
-                        for (int i = 0; i < tileHeight; i++)
-                        {
-                            //int c; // = zlibMemoryStream.ReadByte();
-                            for (int j = 0; j < tileWidth; j++)
-                            {
-                                if (j * bitfieldLength % 8 == 0)
-                                {
-                                    result = await uncompressedReader.ReadAsync();
-                                    //c = result.Buffer.First.Span[0];
-                                    uncompressedReader.AdvanceTo(result.Buffer.GetPosition(1));
-                                }
-                                    
-                            }
-                        }
-                        foreach (var pixel in palette)
-                        {
-                            ArrayPool<byte>.Shared.Return(pixel);
-                        }
+                        await ParsePackedPaletteTile(uncompressedReader, data, x, y, tileWidth, tileHeight, header.Width, subencoding);
                     }
                     else if (17 <= subencoding && subencoding <= 127)
                     {
                         throw new InvalidDataException("Subencodings 17 to 127 are unused");
                     }
-                    else if (subencoding == 128)
+                    else if (subencoding == 128) // Plain RLE
                     {
-                        // Plain RLE
-                        await ParsePlainRLETile(tileWidth, tileHeight, data, uncompressedReader);
+                        await ParsePlainRLETile(uncompressedReader, data, x, y, tileWidth, tileHeight, header.Width);
                     }
-                    else if (130 <= subencoding && subencoding <= 255)
+                    else if (130 <= subencoding && subencoding <= 255) // Palette RLE
                     {
-                        // Palette RLE
-                        var paletteSize = subencoding - 128;
-                        var palette = new byte[paletteSize][];
-                        for (int i = 0; i < palette.Length; i++)
-                        {
-                            palette[i] = await ParseCompressedPixel(uncompressedReader);
-                        }
-                        var pixelsRemaining = tileWidth * tileHeight;
-                        while (pixelsRemaining > 0)
-                        {
-                            result = await uncompressedReader.ReadAsync();
-                            var paletteIndex = result.Buffer.First.Span[0];
-                            uncompressedReader.AdvanceTo(result.Buffer.GetPosition(1));
-                            var runLength = 1;
-                            if ((paletteIndex & 128) != 0)
-                            {
-                                paletteIndex -= 128;
-                                int b;
-                                do
-                                {
-                                    result = await uncompressedReader.ReadAsync();
-                                    b = result.Buffer.First.Span[0];
-                                    uncompressedReader.AdvanceTo(result.Buffer.GetPosition(1));
-                                    runLength += b;
-                                } while (b == byte.MaxValue);
-                            }
-                            pixelsRemaining -= runLength;
-                            //Debug.WriteLine($"index {paletteIndex} len {runLength}");
-                            if (paletteIndex > palette.Length)
-                                throw new InvalidDataException();
-                        }
-                        foreach (var pixel in palette)
-                        {
-                            ArrayPool<byte>.Shared.Return(pixel);
-                        }
+                        await ParsePaletteRLETile(uncompressedReader, data, x, y, tileWidth, tileHeight, header.Width, subencoding - 128);
                     }
                     else
                     {
@@ -193,63 +131,268 @@ namespace VncDotnet.Encodings
             return data;
         }
 
-        private void ParseRaw(ReadResult result, int y, int x, int ty, int tx, byte[] data, int rectangleWidth)
+        private async Task ParseRawTile(PipeReader uncompressedReader, byte[] data, int x, int y, int tileWidth, int tileHeight, int rectangleWidth)
         {
-            var raw = result.Buffer.ForceGetReadOnlySpan(3);
-            Buffer.BlockCopy(new byte[] { raw[0], raw[1], raw[2], 0xff }, 0, data, (
-                                    ((y + ty) * rectangleWidth) +     // y + ty rows
-                                    (x + tx)                        // x + tx colums
-                                    ) * 4, 4);                      // 4 bytes per pixel
+            int tx = 0;
+            int ty = 0;
+            await uncompressedReader.ForEach(3, tileWidth * tileHeight, (mem) =>
+            {
+                var dataIndex = (((y + ty) * rectangleWidth) + x + tx) * 4;
+                data[dataIndex] = mem.Span[0];
+                data[dataIndex + 1] = mem.Span[1];
+                data[dataIndex + 2] = mem.Span[2];
+                data[dataIndex + 3] = 0xff;
+                tx += 1;
+                if (tx >= tileWidth)
+                {
+                    tx = 0;
+                    ty += 1;
+                }
+            });
         }
 
-        private int GetPackedPixelBitFieldLength(uint paletteSize)
+        private async Task ParsePlainRLETile(PipeReader uncompressedReader, byte[] data, int x, int y, int tileWidth, int tileHeight, int rectangleWidth)
         {
-            if (paletteSize <= 2)
+            var tileLength = tileWidth * tileHeight;
+            var pixel = ArrayPool<byte>.Shared.Rent(4);
+            pixel[3] = 0xff;
+            int tx = 0;
+            int ty = 0;
+
+            while (tileLength > 0)
+            {
+                var result = await uncompressedReader.ReadAsync();
+                int read = 0;
+                if (result.Buffer.Length < 4)
+                {
+                    uncompressedReader.AdvanceTo(result.Buffer.Start, result.Buffer.End);
+                    continue;
+                }
+
+                while (tileLength > 0)
+                {
+                    if (result.Buffer.Length - read < 4)
+                        break;
+                    result.Buffer.Slice(read, 3).CopyTo(pixel);
+                    var runLengthSlice = result.Buffer.Slice(read + 3);
+                    if (TryParseRunLength(runLengthSlice, out var length, out var byteLength))
+                    {
+                        tileLength -= length;
+                        read += 3 + byteLength;
+                        for (int i = 0; i < length; i++)
+                        {
+                            Buffer.BlockCopy(pixel, 0, data, (
+                                    ((y + ty) * rectangleWidth) +   // y + ty rows
+                                    (x + tx)                        // x + tx columns
+                                ) * 4, 4);                          // 4 bytes per pixel
+                            tx += 1;
+                            if (tx == tileWidth)
+                            {
+                                tx = 0;
+                                ty++;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+                uncompressedReader.AdvanceTo(result.Buffer.GetPosition(read));
+            }
+            Debug.Assert(tileLength == 0);
+            ArrayPool<byte>.Shared.Return(pixel);
+        }
+
+        private async Task ParsePackedPaletteTile(PipeReader uncompressedReader, byte[] data, int x, int y, int tileWidth, int tileHeight, int rectangleWidth, int paletteSize)
+        {
+            var bitFieldSize = GetPackedPaletteBitFieldLength(paletteSize, tileWidth, tileHeight);
+            var bitFieldEntrySize = GetPackedPaletteBitFieldEntryLength(paletteSize);
+            var tileLength = tileWidth * tileHeight;
+            var palette = ArrayPool<byte>.Shared.Rent(paletteSize * 3);
+            var row = ArrayPool<byte>.Shared.Rent(tileWidth * 4);
+            int tx = 0;
+            int ty = 0;
+            int p = 0;
+            await uncompressedReader.ForEach(3, paletteSize, (mem) =>
+            {
+                palette[p] = mem.Span[0];
+                palette[p + 1] = mem.Span[1];
+                palette[p + 2] = mem.Span[2];
+                p += 3;
+            });
+            int mask = 1;
+            for (int i = 0; i < bitFieldEntrySize - 1; i++)
+            {
+                mask = (mask << 1) | 1;
+            }
+            await uncompressedReader.ForEach(1, bitFieldSize, (mem) =>
+            {
+                int i = 8 - bitFieldEntrySize;
+                while (i >= 0)
+                {
+                    var index = (mem.Span[0] >> i) & ((1 << bitFieldEntrySize) - 1);
+                    row[tx * 4] = palette[index * 3];
+                    row[(tx * 4) + 1] = palette[(index * 3) + 1];
+                    row[(tx * 4) + 2] = palette[(index * 3) + 2];
+                    row[(tx * 4) + 3] = 0xff;
+
+                    tx++;
+                    mask >>= bitFieldEntrySize;
+                    i -= bitFieldEntrySize;
+                    if (tx == tileWidth)
+                    {
+                        Buffer.BlockCopy(row, 0, data, (
+                                ((y + ty) * rectangleWidth) +   // y + ty rows
+                                x                               // x columns
+                            ) * 4, tileWidth * 4);
+                        ty++;
+                        tx = 0;
+                        break;
+                    }
+                }
+            });
+            ArrayPool<byte>.Shared.Return(palette);
+            ArrayPool<byte>.Shared.Return(row);
+        }
+
+        private async Task ParsePaletteRLETile(PipeReader uncompressedReader, byte[] data, int x, int y, int tileWidth, int tileHeight, int rectangleWidth, int paletteSize)
+        {
+            var palette = ArrayPool<byte>.Shared.Rent(paletteSize * 4);
+            var row = ArrayPool<byte>.Shared.Rent(tileWidth * 4);
+            int p = 0;
+            int tx = 0;
+            int ty = 0;
+            await uncompressedReader.ForEach(3, paletteSize, (mem) =>
+            {
+                palette[p] = mem.Span[0];
+                palette[p + 1] = mem.Span[1];
+                palette[p + 2] = mem.Span[2];
+                palette[p + 3] = 0xff;
+                p += 4;
+            });
+            var remainingPixels = tileWidth * tileHeight;
+            while (remainingPixels > 0)
+            {
+                int read = 0;
+                var result = await uncompressedReader.ReadAsync();
+                while (remainingPixels > 0)
+                {
+                    if (result.Buffer.Length - read < 1)
+                    {
+                        break;
+                    }
+                    var slice = result.Buffer.Slice(read);
+                    if (TryParsePaletteRunLength(slice, out var index, out var length, out var byteLength))
+                    {
+                        remainingPixels -= length;
+                        read += byteLength;
+                        for (int i = 0; i < length; i++)
+                        {
+                            Buffer.BlockCopy(palette, index*4, data, (
+                                ((y + ty) * rectangleWidth) +   // y + ty rows
+                                (x + tx)                        // x + tx columns
+                            ) * 4, 4);                          // 4 bytes per pixel
+                            tx++;
+                            if (tx == tileWidth)
+                            {
+                                tx = 0;
+                                ty++;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+                uncompressedReader.AdvanceTo(result.Buffer.GetPosition(read));
+            }
+            Debug.Assert(remainingPixels == 0);
+            ArrayPool<byte>.Shared.Return(palette);
+        }
+
+        private bool TryParseRunLength(ReadOnlySequence<byte> seq, out int length, out int byteLength)
+        {
+            length = 1;
+            byteLength = 0;
+            foreach (var segment in seq)
+            {
+                for (int i = 0; i < segment.Span.Length; i++)
+                {
+                    var b = segment.Span[i];
+                    length += b;
+                    byteLength++;
+                    if (b != byte.MaxValue)
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        private bool TryParsePaletteRunLength(ReadOnlySequence<byte> seq, out int index, out int length, out int byteLength)
+        {
+            length = 1;
+            byteLength = 1;
+            index = 0;
+            foreach (var segment in seq)
+            {
+                for (int i = 0; i < segment.Span.Length; i++)
+                {
+                    var b = segment.Span[i];
+                    if (byteLength == 1)
+                    {
+                        index = b & 127;
+                        if ((b & 128) == 0)
+                        {
+                            return true;
+                        }
+                    }
+                    else
+                    {
+                        length += b;
+                        if (b != byte.MaxValue)
+                            return true;
+                    }
+                    byteLength++;
+                }
+            }
+            return false;
+        }
+
+        private int GetPackedPaletteBitFieldEntryLength(int paletteSize)
+        {
+            if (paletteSize < 2)
+                throw new InvalidOperationException();
+            if (paletteSize == 2)
                 return 1;
             if (paletteSize <= 4)
                 return 2;
             if (paletteSize <= 16)
                 return 4;
-            throw new InvalidOperationException("Invalid palette size");
+            throw new InvalidDataException();
         }
 
-        #region gammel
-        private async Task ParsePlainRLETile(int tileWidth, int tileHeight, Memory<byte> data, PipeReader uncompressedReader)
+        private int GetPackedPaletteBitFieldLength(int paletteSize, int tileWidth, int tileHeight)
         {
-            Debug.Assert(data.Length > 0);
-            var tileLength = tileWidth * tileHeight;
-            while (tileLength > 0)
-            {
-                var pixel = await ParseCompressedPixel(uncompressedReader);
-                tileLength -= await ParseRunLength(uncompressedReader);
-                ArrayPool<byte>.Shared.Return(pixel);
-            }
-            if (tileLength != 0)
-                throw new InvalidDataException();
+            if (paletteSize < 2)
+                throw new InvalidOperationException();
+            if (paletteSize == 2)
+                return (tileWidth + 7) / 8 * tileHeight;
+            if (paletteSize <= 4)
+                return (tileWidth + 3) / 4 * tileHeight;
+            if (paletteSize <= 16)
+                return (tileWidth + 1) / 2 * tileHeight;
+            throw new InvalidDataException();
         }
 
-        private async Task<int> ParseRunLength(PipeReader uncompressedReader)
-        {
-            int runLength = 1;
-            int b;
-            do
-            {
-                var result = await uncompressedReader.ReadAsync();
-                b = result.Buffer.First.Span[0];
-                uncompressedReader.AdvanceTo(result.Buffer.GetPosition(1));
-                runLength += b;
-            } while (b == byte.MaxValue);
-            return runLength;
-        }
-
-        private async Task<byte[]> ParseCompressedPixel(PipeReader uncompressedReader)
+        private async ValueTask<byte[]> ParseCompressedPixel(PipeReader uncompressedReader)
         {
             var result = await uncompressedReader.ReadMinBytesAsync(3);
             var pixel = ParseCompressedPixel(result);
             uncompressedReader.AdvanceTo(result.Buffer.GetPosition(3));
             return pixel;
         }
-        #endregion
 
         private byte[] ParseCompressedPixel(ReadResult result)
         {
@@ -262,21 +405,25 @@ namespace VncDotnet.Encodings
             return pixel;
         }
 
-        private void Decompress(PipeWriter writer, ReadOnlySpan<byte> data)
+        private async Task Decompress(PipeWriter writer, ReadOnlyMemory<byte> data)
         {
             var buf = ArrayPool<byte>.Shared.Rent(4096);
             InflateInputStream.Position = 0;
-            InflateInputStream.Write(data);
+            InflateInputStream.Write(data.Span);
             InflateInputStream.Position = 0;
             InflateInputStream.SetLength(data.Length);
             int read;
 
             do
             {
+                //Memory<byte> memory = writer.GetMemory(data.Length * 2);
+                //read = InflateOutputStream.Read(memory.Span);
+                //writer.Advance(read);
                 read = InflateOutputStream.Read(buf);
-                writer.WriteAsync(buf.AsMemory().Slice(0, read));
+                await writer.WriteAsync(buf.AsMemory().Slice(0, read));
             }
             while (read != 0);
+            //await writer.FlushAsync();
             ArrayPool<byte>.Shared.Return(buf);
         }
     }
