@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO.Pipelines;
 using System.Linq;
 using System.Net.Sockets;
@@ -33,7 +34,7 @@ namespace VncDotnet
         public static readonly SecurityType[] SupportedSecurityTypes = new SecurityType[] { SecurityType.None, SecurityType.VncAuthentication };
         public static readonly RfbEncoding[] SupportedEncodings = new RfbEncoding[] { RfbEncoding.ZRLE, RfbEncoding.Raw };
 
-        public static async Task<RfbConnection> ConnectAsync(string host, int port, string password, IEnumerable<SecurityType> securityTypes)
+        public static async Task<RfbConnection> ConnectAsync(string host, int port, string password, IEnumerable<SecurityType> securityTypes, MonitorSnippet? section)
         {
             var tcpClient = new TcpClient
             {
@@ -80,7 +81,7 @@ namespace VncDotnet
             Debug.WriteLine(serverInitMessage);
             await SendSetEncodingsMessageAsync(tcpClient.Client, SupportedEncodings);
 
-            var connection = new RfbConnection(tcpClient, incomingPacketsPipe, serverInitMessage);
+            var connection = new RfbConnection(tcpClient, incomingPacketsPipe, serverInitMessage, section);
             return connection;
         }
 
