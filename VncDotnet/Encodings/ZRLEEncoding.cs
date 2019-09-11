@@ -407,7 +407,6 @@ namespace VncDotnet.Encodings
 
         private async Task Decompress(PipeWriter writer, ReadOnlyMemory<byte> data)
         {
-            var buf = ArrayPool<byte>.Shared.Rent(4096);
             InflateInputStream.Position = 0;
             InflateInputStream.Write(data.Span);
             InflateInputStream.Position = 0;
@@ -416,15 +415,12 @@ namespace VncDotnet.Encodings
 
             do
             {
-                //Memory<byte> memory = writer.GetMemory(data.Length * 2);
-                //read = InflateOutputStream.Read(memory.Span);
-                //writer.Advance(read);
-                read = InflateOutputStream.Read(buf);
-                await writer.WriteAsync(buf.AsMemory().Slice(0, read));
+                Memory<byte> memory = writer.GetMemory(data.Length * 2);
+                read = InflateOutputStream.Read(memory.Span);
+                writer.Advance(read);
             }
             while (read != 0);
-            //await writer.FlushAsync();
-            ArrayPool<byte>.Shared.Return(buf);
+            await writer.FlushAsync();
         }
     }
 }

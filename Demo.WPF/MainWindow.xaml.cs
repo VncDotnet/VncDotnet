@@ -29,8 +29,8 @@ namespace Demo.WPF
 
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            //await MyVncElement.ConnectAsync("10.128.1.104", 5900, "asdf", RfbConnection.SupportedSecurityTypes);
-            await MyVncElement.ConnectAsync("192.168.178.20", 5900, "asdf", RfbConnection.SupportedSecurityTypes);
+            await MyVncElement.ConnectAsync("10.128.1.104", 5900, "asdf", RfbConnection.SupportedSecurityTypes);
+            //await MyVncElement.ConnectAsync("192.168.178.20", 5900, "asdf", RfbConnection.SupportedSecurityTypes);
         }
     }
 }
