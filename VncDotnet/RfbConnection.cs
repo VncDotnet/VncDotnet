@@ -14,6 +14,7 @@ using System.IO.Compression;
 using System.IO;
 using VncDotnet.Messages;
 using VncDotnet.Encodings;
+using System.Drawing;
 
 namespace VncDotnet
 {
@@ -43,14 +44,30 @@ namespace VncDotnet
     }
     #endregion
 
+    public class MonitorSnippet
+    {
+        public readonly ushort X;
+        public readonly ushort Y;
+        public readonly ushort Width;
+        public readonly ushort Height;
+
+        public MonitorSnippet(ushort x, ushort y, ushort width, ushort height)
+        {
+            X = x;
+            Y = y;
+            Width = width;
+            Height = height;
+        }
+    }
+
     public partial class RfbConnection
     {
         private readonly TcpClient Tcp;
         private readonly Pipe IncomingPacketsPipe;
         private readonly ServerInitMessage ServerInitMessage;
+        private readonly MonitorSnippet? Section;
         private readonly ZRLEEncoding ZRLEEncoding = new ZRLEEncoding();
         private readonly RawEncoding RawEncoding = new RawEncoding();
-
         public delegate void FramebufferUpdate(IEnumerable<(RfbRectangleHeader, byte[])> rectangles);
         public event FramebufferUpdate? OnVncUpdate;
 
@@ -62,11 +79,12 @@ namespace VncDotnet
             Task.Run(Loop);
         }
 
-        public RfbConnection(TcpClient client, Pipe pipe, ServerInitMessage serverInitMessage)
+        public RfbConnection(TcpClient client, Pipe pipe, ServerInitMessage serverInitMessage, MonitorSnippet? section)
         {
             Tcp = client;
             IncomingPacketsPipe = pipe;
             ServerInitMessage = serverInitMessage;
+            Section = section;
         }
 
         private Task WriteFramebufferUpdateRequest(ushort x, ushort y, ushort width, ushort height, bool incremental)
@@ -114,9 +132,20 @@ namespace VncDotnet
 
         public async Task Loop()
         {
-            OnResolutionUpdate?.Invoke(ServerInitMessage.FramebufferWidth, ServerInitMessage.FramebufferHeight);
+            ushort x = 0;
+            ushort y = 0;
+            ushort width = ServerInitMessage.FramebufferWidth;
+            ushort height = ServerInitMessage.FramebufferHeight;
+            if (Section != null)
+            {
+                x = Section.X;
+                y = Section.Y;
+                width = Section.Width;
+                height = Section.Height;
+            }
+            OnResolutionUpdate?.Invoke(width, height);
             var stopWatch = new Stopwatch();
-            await WriteFramebufferUpdateRequest(0, 0, ServerInitMessage.FramebufferWidth, ServerInitMessage.FramebufferHeight, false);
+            await WriteFramebufferUpdateRequest(x, y, width, height, false);
             while (true)
             {
                 stopWatch.Restart();
@@ -125,7 +154,7 @@ namespace VncDotnet
                 switch (messageType)
                 {
                     case RfbServerMessageType.FramebufferUpdate:
-                        await WriteFramebufferUpdateRequest(0, 0, ServerInitMessage.FramebufferWidth, ServerInitMessage.FramebufferHeight, true);
+                        await WriteFramebufferUpdateRequest(x, y, width, height, true);
                         Debug.WriteLine($"{stopWatch.Elapsed} (WriteFramebufferUpdateRequest finished)");
                         var rectanglesCount = await ParseFramebufferUpdateHeader();
                         Debug.WriteLine($"{stopWatch.Elapsed} (ParseFramebufferUpdateHeader finished)");

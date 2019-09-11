@@ -2,6 +2,8 @@
 using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -14,7 +16,6 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
-using System.Windows.Shapes;
 using VncDotnet.Messages;
 
 namespace VncDotnet.WPF
@@ -27,14 +28,28 @@ namespace VncDotnet.WPF
         }
 
         private WriteableBitmap? Bitmap;
+        private RfbConnection? Client = null;
+        private MonitorSnippet? Section = null;
+        private int FramebufferWidth;
+        private int FramebufferHeight;
 
-
-        public async Task ConnectAsync(string host, int port, string password, IEnumerable<SecurityType> securityTypes)
+        public Task ConnectAsync(string host, int port, string password)
         {
-            var client = await RfbConnection.ConnectAsync(host, port, password, securityTypes);
-            client.OnVncUpdate += Client_OnVncUpdate;
-            client.OnResolutionUpdate += Client_OnResolutionUpdate;
-            client.Start();
+            return ConnectAsync(host, port, password, RfbConnection.SupportedSecurityTypes);
+        }
+
+        public Task ConnectAsync(string host, int port, string password, IEnumerable<SecurityType> securityTypes)
+        {
+            return ConnectAsync(host, port, password, securityTypes, null);
+        }
+
+        public async Task ConnectAsync(string host, int port, string password, IEnumerable<SecurityType> securityTypes, MonitorSnippet? section)
+        {
+            Client = await RfbConnection.ConnectAsync(host, port, password, securityTypes, section);
+            Section = section;
+            Client.OnVncUpdate += Client_OnVncUpdate;
+            Client.OnResolutionUpdate += Client_OnResolutionUpdate;
+            Client.Start();
         }
 
         private void Client_OnResolutionUpdate(int framebufferWidth, int framebufferHeight)
@@ -42,6 +57,8 @@ namespace VncDotnet.WPF
             Application.Current?.Dispatcher.Invoke(new Action(() =>
             {
                 var image = (Image) GetTemplateChild("Scene");
+                FramebufferWidth = framebufferWidth;
+                FramebufferHeight = framebufferHeight;
                 Bitmap = BitmapFactory.New(framebufferWidth, framebufferHeight);
                 image.Source = Bitmap;
             }));
@@ -63,15 +80,51 @@ namespace VncDotnet.WPF
                     {
                         if (data != null)
                         {
-                            for (int ry = 0; ry < header.Height; ry++)
+                            for (ushort ry = 0; ry < header.Height; ry++)
                             {
-                                Marshal.Copy(data,
-                                    ry * header.Width * 4,
-                                    Bitmap.BackBuffer + ((
-                                        ((header.Y + ry) * Bitmap.PixelWidth) +
-                                        header.X
-                                    ) * 4),
-                                    header.Width * 4);
+                                int bitmapRow = ry + header.Y - BitmapY();
+
+                                // skip rows outside the bitmap
+                                if (bitmapRow < 0 || bitmapRow >= FramebufferHeight)
+                                    continue;
+
+                                // cull rows partly outside the bitmap
+                                int rowLength = header.Width;
+
+                                // left border
+                                int leftSurplus = 0;
+                                if (BitmapX() > header.X)
+                                {
+                                    int diff = BitmapX() - header.X;
+                                    rowLength -= diff;
+                                    leftSurplus += diff;
+                                }
+                                if (leftSurplus > header.Width)
+                                    continue;
+                                int leftPadding = 0;
+                                if (header.X > BitmapX())
+                                    leftPadding = header.X - BitmapX();
+
+                                // right border
+                                int rightSurplus = 0;
+                                if (header.X + header.Width > BitmapX() + FramebufferWidth)
+                                {
+                                    rightSurplus = header.X + header.Width - BitmapX() - FramebufferWidth;
+                                    rowLength -= rightSurplus;
+                                }
+
+                                // GO!
+                                if (rowLength > 0)
+                                {
+                                    int srcOffset = ((ry * header.Width) + leftSurplus) * 4;
+                                    int dstOffset = (((bitmapRow * FramebufferWidth) + leftPadding) * 4);
+                                    if (dstOffset < 0 || dstOffset + (rowLength * 4) > Bitmap.PixelHeight * Bitmap.PixelWidth * 4)
+                                        throw new InvalidDataException();
+                                    Marshal.Copy(data,
+                                        srcOffset,
+                                        Bitmap.BackBuffer + dstOffset,
+                                        rowLength * 4);
+                                }
                             }
                             ArrayPool<byte>.Shared.Return(data);
                         }
@@ -84,6 +137,24 @@ namespace VncDotnet.WPF
                 stopwatch.Stop();
                 //Debug.WriteLine($"Client_OnVncUpdate invocation took {stopwatch.Elapsed}");
             }));
+        }
+
+        private int BitmapX()
+        {
+            if (Section != null)
+            {
+                return Section.X;
+            }
+            return 0;
+        }
+
+        private int BitmapY()
+        {
+            if (Section != null)
+            {
+                return Section.Y;
+            }
+            return 0;
         }
     }
 }
