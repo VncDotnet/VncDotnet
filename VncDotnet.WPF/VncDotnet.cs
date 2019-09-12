@@ -38,6 +38,11 @@ namespace VncDotnet.WPF
             return ConnectAsync(host, port, password, RfbConnection.SupportedSecurityTypes);
         }
 
+        public Task ConnectAsync(string host, int port, string password, MonitorSnippet? section)
+        {
+            return ConnectAsync(host, port, password, RfbConnection.SupportedSecurityTypes, section);
+        }
+
         public Task ConnectAsync(string host, int port, string password, IEnumerable<SecurityType> securityTypes)
         {
             return ConnectAsync(host, port, password, securityTypes, null);
