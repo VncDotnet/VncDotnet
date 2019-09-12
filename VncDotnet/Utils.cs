@@ -7,6 +7,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace VncDotnet
@@ -14,11 +15,11 @@ namespace VncDotnet
     internal static class PipeReaderExtensions
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static async Task<ReadResult> ReadMinBytesAsync(this PipeReader reader, int bytes)
+        public static async Task<ReadResult> ReadMinBytesAsync(this PipeReader reader, int bytes, CancellationToken token)
         {
             while (true)
             {
-                ReadResult result = await reader.ReadAsync();
+                ReadResult result = await reader.ReadAsync(token);
                 if (result.Buffer.Length >= bytes)
                 {
                     return result;
@@ -28,28 +29,28 @@ namespace VncDotnet
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static async Task<byte> ReadByteAsync(this PipeReader reader)
+        public static async Task<byte> ReadByteAsync(this PipeReader reader, CancellationToken token)
         {
-            var result = await reader.ReadMinBytesAsync(1);
+            var result = await reader.ReadMinBytesAsync(1, token);
             var b = result.Buffer.First.Span[0];
             reader.AdvanceTo(result.Buffer.GetPosition(1));
             return b;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static async Task<byte[]> ReadBytesAsync(this PipeReader reader, int bytes)
+        public static async Task<byte[]> ReadBytesAsync(this PipeReader reader, int bytes, CancellationToken token)
         {
             var array = new byte[bytes];
-            var result = await reader.ReadMinBytesAsync(bytes);
+            var result = await reader.ReadMinBytesAsync(bytes, token);
             result.Buffer.ForceGetReadOnlySpan(bytes).Slice(0, bytes).CopyTo(array);
             reader.AdvanceTo(result.Buffer.GetPosition(bytes));
             return array;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static async Task<uint> ReadU32BEAsync(this PipeReader reader)
+        public static async Task<uint> ReadU32BEAsync(this PipeReader reader, CancellationToken token)
         {
-            var result = await reader.ReadMinBytesAsync(4);
+            var result = await reader.ReadMinBytesAsync(4, token);
             var number = BinaryPrimitives.ReadUInt32BigEndian(result.Buffer.ForceGetReadOnlySpan(4));
             reader.AdvanceTo(result.Buffer.GetPosition(4));
             return number;

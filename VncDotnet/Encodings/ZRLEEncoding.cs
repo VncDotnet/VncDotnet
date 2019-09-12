@@ -8,6 +8,7 @@ using System.IO.Compression;
 using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using VncDotnet;
 using VncDotnet.Messages;
@@ -26,20 +27,20 @@ namespace VncDotnet.Encodings
             InflateOutputStream = new DeflateStream(InflateInputStream, CompressionMode.Decompress);
         }
 
-        public async Task<byte[]> ParseRectangle(PipeReader reader, RfbRectangleHeader header, PixelFormat format)
+        public async Task<byte[]> ParseRectangle(PipeReader reader, RfbRectangleHeader header, PixelFormat format, CancellationToken token)
         {
             Debug.Assert(format.BitsPerPixel == 32);
             var ZRLEPipe = new Pipe();
-            var parser = Task.Run(() => ParsePixelData(ZRLEPipe.Reader, header));
+            var parser = Task.Run(() => ParsePixelData(ZRLEPipe.Reader, header, token));
 
             // read compressed length
-            var result = await reader.ReadMinBytesAsync(4);
+            var result = await reader.ReadMinBytesAsync(4, token);
             var length = BinaryPrimitives.ReadUInt32BigEndian(result.Buffer.ForceGetReadOnlySpan(4));
             reader.AdvanceTo(result.Buffer.GetPosition(4));
             long remaining = length;
             if (Fresh)
             {
-                result = await reader.ReadMinBytesAsync(2);
+                result = await reader.ReadMinBytesAsync(2, token);
                 reader.AdvanceTo(result.Buffer.GetPosition(2));
                 remaining -= 2;
                 Fresh = false;
@@ -72,7 +73,7 @@ namespace VncDotnet.Encodings
             return await parser;
         }
 
-        private async Task<byte[]> ParsePixelData(PipeReader uncompressedReader, RfbRectangleHeader header)
+        private async Task<byte[]> ParsePixelData(PipeReader uncompressedReader, RfbRectangleHeader header, CancellationToken token)
         {
             byte[] data = ArrayPool<byte>.Shared.Rent(header.Width * header.Height * 4);
             Array.Clear(data, 0, data.Length);
@@ -93,7 +94,7 @@ namespace VncDotnet.Encodings
                     }
                     else if (subencoding == 1) // Solid
                     {
-                        var pixel = await ParseCompressedPixel(uncompressedReader);
+                        var pixel = await ParseCompressedPixel(uncompressedReader, token);
                         for (int ty = 0; ty < tileHeight; ty++)
                         {
                             for (int tx = 0; tx < tileWidth; tx++)
@@ -386,9 +387,9 @@ namespace VncDotnet.Encodings
             throw new InvalidDataException();
         }
 
-        private async ValueTask<byte[]> ParseCompressedPixel(PipeReader uncompressedReader)
+        private async ValueTask<byte[]> ParseCompressedPixel(PipeReader uncompressedReader, CancellationToken token)
         {
-            var result = await uncompressedReader.ReadMinBytesAsync(3);
+            var result = await uncompressedReader.ReadMinBytesAsync(3, token);
             var pixel = ParseCompressedPixel(result);
             uncompressedReader.AdvanceTo(result.Buffer.GetPosition(3));
             return pixel;

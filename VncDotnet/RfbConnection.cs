@@ -62,6 +62,7 @@ namespace VncDotnet
 
     public partial class RfbConnection
     {
+        private readonly CancellationTokenSource CancelSource = new CancellationTokenSource();
         private readonly TcpClient Tcp;
         private readonly Pipe IncomingPacketsPipe;
         private readonly ServerInitMessage ServerInitMessage;
@@ -74,9 +75,14 @@ namespace VncDotnet
         public delegate void ResolutionUpdate(int framebufferWidth, int framebufferHeight);
         public event ResolutionUpdate? OnResolutionUpdate;
 
-        public void Start()
+        public Task Start()
         {
-            Task.Run(Loop);
+            return Task.Run(Loop);
+        }
+
+        public void Stop()
+        {
+            CancelSource.Cancel();
         }
 
         public RfbConnection(TcpClient client, Pipe pipe, ServerInitMessage serverInitMessage, MonitorSnippet? section)
@@ -87,7 +93,7 @@ namespace VncDotnet
             Section = section;
         }
 
-        private Task WriteFramebufferUpdateRequest(ushort x, ushort y, ushort width, ushort height, bool incremental)
+        private ValueTask<int> WriteFramebufferUpdateRequest(ushort x, ushort y, ushort width, ushort height, bool incremental, CancellationToken token)
         {
             var buf = new byte[10];
             buf[0] = (byte) RfbClientMessageType.FramebufferUpdateRequest;
@@ -96,27 +102,27 @@ namespace VncDotnet
             BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(4, 2), y);
             BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(6, 2), width);
             BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(8, 2), height);
-            return Tcp.Client.SendAsync(buf, SocketFlags.None);
+            return Tcp.Client.SendAsync(buf, SocketFlags.None, token); //TODO ensure all bytes are sent
         }
 
-        private async Task<int> ParseFramebufferUpdateHeader()
+        private async Task<int> ParseFramebufferUpdateHeader(CancellationToken token)
         {
-            ReadResult result = await IncomingPacketsPipe.Reader.ReadMinBytesAsync(3);
+            ReadResult result = await IncomingPacketsPipe.Reader.ReadMinBytesAsync(3, token);
             var rectanglesCount = BinaryPrimitives.ReadUInt16BigEndian(result.Buffer.Slice(1, 2).ToArray());
             IncomingPacketsPipe.Reader.AdvanceTo(result.Buffer.GetPosition(3));
             return rectanglesCount;
         }
 
-        private async Task<(RfbRectangleHeader, byte[])> ParseRectangle(PixelFormat format)
+        private async Task<(RfbRectangleHeader, byte[])> ParseRectangle(PixelFormat format, CancellationToken token)
         {
-            ReadResult result = await IncomingPacketsPipe.Reader.ReadMinBytesAsync(12);
+            ReadResult result = await IncomingPacketsPipe.Reader.ReadMinBytesAsync(12, token);
             var header = ParseRectangleHeader(result.Buffer.Slice(0, 12).ToArray());
             IncomingPacketsPipe.Reader.AdvanceTo(result.Buffer.GetPosition(12));
             //Debug.WriteLine($"Rectangle {header}");
             return header.Encoding switch
             {
-                RfbEncoding.ZRLE => (header, await ZRLEEncoding.ParseRectangle(IncomingPacketsPipe.Reader, header, format)),
-                RfbEncoding.Raw => (header, await RawEncoding.ParseRectangle(IncomingPacketsPipe.Reader, header, format)),
+                RfbEncoding.ZRLE => (header, await ZRLEEncoding.ParseRectangle(IncomingPacketsPipe.Reader, header, format, token)),
+                RfbEncoding.Raw => (header, await RawEncoding.ParseRectangle(IncomingPacketsPipe.Reader, header, format, token)),
                 _ => throw new Exception($"unknown enc {header.Encoding}"),
             };
         }
@@ -132,65 +138,69 @@ namespace VncDotnet
 
         public async Task Loop()
         {
-            ushort x = 0;
-            ushort y = 0;
-            ushort width = ServerInitMessage.FramebufferWidth;
-            ushort height = ServerInitMessage.FramebufferHeight;
-            if (Section != null)
+            try
             {
-                x = Section.X;
-                y = Section.Y;
-                width = Section.Width;
-                height = Section.Height;
-            }
-            OnResolutionUpdate?.Invoke(width, height);
-            var stopWatch = new Stopwatch();
-            await WriteFramebufferUpdateRequest(x, y, width, height, false);
-            while (true)
-            {
-                stopWatch.Restart();
-                var messageType = (RfbServerMessageType) await IncomingPacketsPipe.Reader.ReadByteAsync();
-                Debug.WriteLine($"{stopWatch.Elapsed} (ParseServerMessageType finished)");
-                switch (messageType)
+                ushort x = 0;
+                ushort y = 0;
+                ushort width = ServerInitMessage.FramebufferWidth;
+                ushort height = ServerInitMessage.FramebufferHeight;
+                if (Section != null)
                 {
-                    case RfbServerMessageType.FramebufferUpdate:
-                        await WriteFramebufferUpdateRequest(x, y, width, height, true);
-                        Debug.WriteLine($"{stopWatch.Elapsed} (WriteFramebufferUpdateRequest finished)");
-                        var rectanglesCount = await ParseFramebufferUpdateHeader();
-                        Debug.WriteLine($"{stopWatch.Elapsed} (ParseFramebufferUpdateHeader finished)");
-                        var rectangles = new (RfbRectangleHeader, byte[])[rectanglesCount];
-                        for (var i = 0; i < rectanglesCount; ++i)
-                        {
-                            rectangles[i] = await ParseRectangle(ServerInitMessage.PixelFormat);
-                        }
-                        Debug.WriteLine($"{stopWatch.Elapsed} (ParseRectangles finished)");
-                        OnVncUpdate?.Invoke(rectangles);
-                        Debug.WriteLine($"{stopWatch.Elapsed} (OnVncUpdate finished)");
-                        break;
-                    case RfbServerMessageType.Bell:
-                        Debug.WriteLine($"BELL");
-                        break;
-                    case RfbServerMessageType.ServerCutText:
-                        await ParseServerCutText();
-                        break;
-                    case RfbServerMessageType.SetColorMapEntries:
-                        throw new NotImplementedException();
-                    default:
-                        throw new InvalidDataException();
+                    x = Section.X;
+                    y = Section.Y;
+                    width = Section.Width;
+                    height = Section.Height;
+                }
+                OnResolutionUpdate?.Invoke(width, height);
+                var stopWatch = new Stopwatch();
+                await WriteFramebufferUpdateRequest(x, y, width, height, false, CancelSource.Token);
+                while (!CancelSource.IsCancellationRequested)
+                {
+                    stopWatch.Restart();
+                    var messageType = (RfbServerMessageType)await IncomingPacketsPipe.Reader.ReadByteAsync(CancelSource.Token);
+                    Debug.WriteLine($"{stopWatch.Elapsed} (ParseServerMessageType finished)");
+                    switch (messageType)
+                    {
+                        case RfbServerMessageType.FramebufferUpdate:
+                            await WriteFramebufferUpdateRequest(x, y, width, height, true, CancelSource.Token);
+                            Debug.WriteLine($"{stopWatch.Elapsed} (WriteFramebufferUpdateRequest finished)");
+                            var rectanglesCount = await ParseFramebufferUpdateHeader(CancelSource.Token);
+                            Debug.WriteLine($"{stopWatch.Elapsed} (ParseFramebufferUpdateHeader finished)");
+                            var rectangles = new (RfbRectangleHeader, byte[])[rectanglesCount];
+                            for (var i = 0; i < rectanglesCount; ++i)
+                            {
+                                rectangles[i] = await ParseRectangle(ServerInitMessage.PixelFormat, CancelSource.Token);
+                            }
+                            Debug.WriteLine($"{stopWatch.Elapsed} (ParseRectangles finished)");
+                            OnVncUpdate?.Invoke(rectangles);
+                            Debug.WriteLine($"{stopWatch.Elapsed} (OnVncUpdate finished)");
+                            break;
+                        case RfbServerMessageType.Bell:
+                            Debug.WriteLine($"BELL");
+                            break;
+                        case RfbServerMessageType.ServerCutText:
+                            await ParseServerCutText();
+                            break;
+                        case RfbServerMessageType.SetColorMapEntries:
+                            throw new NotImplementedException();
+                        default:
+                            throw new InvalidDataException();
+                    }
                 }
             }
+            catch (TaskCanceledException) { }
         }
 
         private async Task ParseServerCutText()
         {
-            ReadResult result = await IncomingPacketsPipe.Reader.ReadMinBytesAsync(7);
+            ReadResult result = await IncomingPacketsPipe.Reader.ReadMinBytesAsync(7, CancelSource.Token);
             var length = BinaryPrimitives.ReadUInt32BigEndian(result.Buffer.Slice(3, 4).ToArray());
             IncomingPacketsPipe.Reader.AdvanceTo(result.Buffer.GetPosition(7));
             long remaining = length;
             StringBuilder builder = new StringBuilder();
             while (remaining > 0)
             {
-                result = await IncomingPacketsPipe.Reader.ReadAsync();
+                result = await IncomingPacketsPipe.Reader.ReadAsync(CancelSource.Token);
                 long read = 0;
                 foreach (var segment in result.Buffer)
                 {

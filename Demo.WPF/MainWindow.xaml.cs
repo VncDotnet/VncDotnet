@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -21,6 +22,7 @@ namespace Demo.WPF
     /// </summary>
     public partial class MainWindow : Window
     {
+        private readonly CancellationTokenSource CancelSource = new CancellationTokenSource();
         public MainWindow()
         {
             InitializeComponent();
@@ -30,7 +32,7 @@ namespace Demo.WPF
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             //await MyVncElement.ConnectAsync("10.128.1.104", 5900, "asdf", RfbConnection.SupportedSecurityTypes);
-            await MyVncElement.ConnectAsync("10.128.1.104", 5900, "asdf", RfbConnection.SupportedSecurityTypes, new MonitorSnippet(920, 0, 1920, 540));
+            await MyVncElement.ConnectAsync("10.128.1.104", 5900, "asdf", RfbConnection.SupportedSecurityTypes, new MonitorSnippet(920, 0, 1920, 540), CancelSource.Token);
             //await MyVncElement.ConnectAsync("192.168.178.20", 5900, "asdf", RfbConnection.SupportedSecurityTypes);
         }
     }

@@ -8,6 +8,7 @@ using System.IO.Pipelines;
 using System.Linq;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using VncDotnet.Messages;
 
@@ -34,7 +35,7 @@ namespace VncDotnet
         public static readonly SecurityType[] SupportedSecurityTypes = new SecurityType[] { SecurityType.None, SecurityType.VncAuthentication };
         public static readonly RfbEncoding[] SupportedEncodings = new RfbEncoding[] { RfbEncoding.ZRLE, RfbEncoding.Raw };
 
-        public static async Task<RfbConnection> ConnectAsync(string host, int port, string password, IEnumerable<SecurityType> securityTypes, MonitorSnippet? section)
+        public static async Task<RfbConnection> ConnectAsync(string host, int port, string password, IEnumerable<SecurityType> securityTypes, MonitorSnippet? section, CancellationToken token)
         {
             var tcpClient = new TcpClient
             {
@@ -45,39 +46,39 @@ namespace VncDotnet
             var incomingPacketsPipeWriterTask = Task.Run(() => WriteToRfbPipeAsync(tcpClient.Client, incomingPacketsPipe.Writer));
 
             // Protocol Version
-            var version = await ParseProtocolVersionAsync(incomingPacketsPipe.Reader);
-            await SendProtocolVersionAsync(tcpClient.Client);
+            var version = await ParseProtocolVersionAsync(incomingPacketsPipe.Reader, token);
+            await SendProtocolVersionAsync(tcpClient.Client, token);
 
             // Security Types
-            var theirSecurityTypes = await ParseSecurityTypesAsync(incomingPacketsPipe.Reader);
+            var theirSecurityTypes = await ParseSecurityTypesAsync(incomingPacketsPipe.Reader, token);
             if (theirSecurityTypes.Length == 0)
                 throw new NoSecurityTypesException();
             if (theirSecurityTypes[0] == 0)
                 //TODO read msg
                 throw new RejectException();
             var securityType = SelectSecurityType(securityTypes, theirSecurityTypes);
-            await SendSecurityTypeAsync(tcpClient.Client, securityType);
+            await SendSecurityTypeAsync(tcpClient.Client, securityType, token);
 
             if (securityType == SecurityType.None)
             {
-                var securityResult = await ParseSecurityResultAsync(incomingPacketsPipe.Reader);
+                var securityResult = await ParseSecurityResultAsync(incomingPacketsPipe.Reader, token);
                 if (securityResult != 0)
                     //TODO read msg
                     throw new RejectException();
             }
             else if (securityType == SecurityType.VncAuthentication)
             {
-                var challenge = await ParseSecurityChallengeAsync(incomingPacketsPipe.Reader);
-                await SendSecurityResponseAsync(tcpClient.Client, Utils.EncryptChallenge(password, challenge));
-                var securityResult = await ParseSecurityResultAsync(incomingPacketsPipe.Reader);
+                var challenge = await ParseSecurityChallengeAsync(incomingPacketsPipe.Reader, token);
+                await SendSecurityResponseAsync(tcpClient.Client, Utils.EncryptChallenge(password, challenge), token);
+                var securityResult = await ParseSecurityResultAsync(incomingPacketsPipe.Reader, token);
                 if (securityResult != 0)
                     //TODO read msg
                     throw new RejectException();
             }
 
             // Finish initializing protocol with host
-            await SendClientInitAsync(tcpClient.Client, true);
-            var serverInitMessage = await ParseServerInitAsync(incomingPacketsPipe.Reader);
+            await SendClientInitAsync(tcpClient.Client, true, token);
+            var serverInitMessage = await ParseServerInitAsync(incomingPacketsPipe.Reader, token);
             Debug.WriteLine(serverInitMessage);
             await SendSetEncodingsMessageAsync(tcpClient.Client, SupportedEncodings);
 
@@ -91,9 +92,9 @@ namespace VncDotnet
             Encoding.ASCII.GetBytes("RFB 003.008\n")
         };
 
-        private static async Task<RfbVersion> ParseProtocolVersionAsync(PipeReader reader)
+        private static async Task<RfbVersion> ParseProtocolVersionAsync(PipeReader reader, CancellationToken token)
         {
-            var result = await reader.ReadMinBytesAsync(12);
+            var result = await reader.ReadMinBytesAsync(12, token);
             bool versionOk = false;
             foreach (var supportedVersion in SupportedServerProtocolVersions)
             {
@@ -109,22 +110,22 @@ namespace VncDotnet
             return RfbVersion.v3_8;
         }
 
-        private static async Task SendProtocolVersionAsync(Socket socket)
+        private static ValueTask<int> SendProtocolVersionAsync(Socket socket, CancellationToken token)
         {
-            await socket.SendAsync(Encoding.ASCII.GetBytes($"RFB 003.008\n"), SocketFlags.None);
+            return socket.SendAsync(Encoding.ASCII.GetBytes($"RFB 003.008\n"), SocketFlags.None, token);
         }
 
-        private static async Task<SecurityType[]> ParseSecurityTypesAsync(PipeReader reader)
+        private static async Task<SecurityType[]> ParseSecurityTypesAsync(PipeReader reader, CancellationToken token)
         {
             SecurityType[] types;
-            var typesLength = await reader.ReadByteAsync();
+            var typesLength = await reader.ReadByteAsync(token);
             if (typesLength == 0)
                 throw new NoSecurityTypesException();
             types = new SecurityType[typesLength];
 
             for (var i = 0; i < typesLength; ++i)
             {
-                types[i] = (SecurityType) await reader.ReadByteAsync();
+                types[i] = (SecurityType) await reader.ReadByteAsync(token);
             }
             return types;
         }
@@ -144,38 +145,38 @@ namespace VncDotnet
             throw new SecurityTypesMismatchException();
         }
 
-        private static async Task SendSecurityTypeAsync(Socket socket, SecurityType securityType)
+        private static ValueTask<int> SendSecurityTypeAsync(Socket socket, SecurityType securityType, CancellationToken token)
         {
-            await socket.SendAsync(new byte[] { (byte) securityType }, SocketFlags.None);
+            return socket.SendAsync(new byte[] { (byte) securityType }, SocketFlags.None, token);
         }
 
-        private static Task<uint> ParseSecurityResultAsync(PipeReader reader)
+        private static Task<uint> ParseSecurityResultAsync(PipeReader reader, CancellationToken token)
         {
-            return reader.ReadU32BEAsync();
+            return reader.ReadU32BEAsync(token);
         }
 
-        private static Task<byte[]> ParseSecurityChallengeAsync(PipeReader reader)
+        private static Task<byte[]> ParseSecurityChallengeAsync(PipeReader reader, CancellationToken token)
         {
-            return reader.ReadBytesAsync(16);
+            return reader.ReadBytesAsync(16, token);
         }
 
-        private static Task SendSecurityResponseAsync(Socket socket, byte[] response)
+        private static ValueTask<int> SendSecurityResponseAsync(Socket socket, byte[] response, CancellationToken token)
         {
-            return socket.SendAsync(response, SocketFlags.None);
+            return socket.SendAsync(response, SocketFlags.None, token); //TODO ensure everything is sent
         }
 
-        private static Task SendClientInitAsync(Socket socket, bool shared)
+        private static ValueTask<int> SendClientInitAsync(Socket socket, bool shared, CancellationToken token)
         {
-            return socket.SendAsync(new byte[] { (byte) (shared ? 1 : 0) }, SocketFlags.None);
+            return socket.SendAsync(new byte[] { (byte) (shared ? 1 : 0) }, SocketFlags.None, token); //TODO ensure everything is sent
         }
 
-        private static async Task<ServerInitMessage> ParseServerInitAsync(PipeReader reader)
+        private static async Task<ServerInitMessage> ParseServerInitAsync(PipeReader reader, CancellationToken token)
         {
-            var result = await reader.ReadMinBytesAsync(24);
+            var result = await reader.ReadMinBytesAsync(24, token);
             var messageBytes = result.Buffer.Slice(0, 24).ToArray();
             reader.AdvanceTo(result.Buffer.GetPosition(24));
             var nameLength = BinaryPrimitives.ReadUInt32BigEndian(messageBytes.AsSpan(20, 4));
-            var nameBytes = await reader.ReadBytesAsync((int) nameLength);
+            var nameBytes = await reader.ReadBytesAsync((int) nameLength, token);
             return new ServerInitMessage(
                 BinaryPrimitives.ReadUInt16BigEndian(messageBytes.AsSpan(0, 2)),
                 BinaryPrimitives.ReadUInt16BigEndian(messageBytes.AsSpan(2, 2)),

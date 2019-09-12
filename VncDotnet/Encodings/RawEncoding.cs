@@ -6,6 +6,7 @@ using System.IO.Pipelines;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using VncDotnet;
 using VncDotnet.Messages;
@@ -14,7 +15,7 @@ namespace VncDotnet.Encodings
 {
     class RawEncoding
     {
-        public async Task<byte[]> ParseRectangle(PipeReader reader, RfbRectangleHeader header, PixelFormat format)
+        public async Task<byte[]> ParseRectangle(PipeReader reader, RfbRectangleHeader header, PixelFormat format, CancellationToken token)
         {
             Debug.Assert(format.BitsPerPixel == 32);
             var remainingPixels = header.Width * header.Height;
@@ -22,7 +23,7 @@ namespace VncDotnet.Encodings
             var destPos = 0;
             while (remainingPixels > 0)
             {
-                var result = await reader.ReadAsync();
+                var result = await reader.ReadAsync(token);
                 byte[]? remainder = null;
                 int read = 0;
                 foreach (var segment in result.Buffer)

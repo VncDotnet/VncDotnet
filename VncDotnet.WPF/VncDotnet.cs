@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -20,7 +21,7 @@ using VncDotnet.Messages;
 
 namespace VncDotnet.WPF
 {
-    public class VncDotnet : Control
+    public class VncDotnet : Control, IDisposable
     {
         static VncDotnet()
         {
@@ -33,28 +34,28 @@ namespace VncDotnet.WPF
         private int FramebufferWidth;
         private int FramebufferHeight;
 
-        public Task ConnectAsync(string host, int port, string password)
+        public Task ConnectAsync(string host, int port, string password, CancellationToken token)
         {
-            return ConnectAsync(host, port, password, RfbConnection.SupportedSecurityTypes);
+            return ConnectAsync(host, port, password, RfbConnection.SupportedSecurityTypes, token);
         }
 
-        public Task ConnectAsync(string host, int port, string password, MonitorSnippet? section)
+        public Task ConnectAsync(string host, int port, string password, MonitorSnippet? section, CancellationToken token)
         {
-            return ConnectAsync(host, port, password, RfbConnection.SupportedSecurityTypes, section);
+            return ConnectAsync(host, port, password, RfbConnection.SupportedSecurityTypes, section, token);
         }
 
-        public Task ConnectAsync(string host, int port, string password, IEnumerable<SecurityType> securityTypes)
+        public Task ConnectAsync(string host, int port, string password, IEnumerable<SecurityType> securityTypes, CancellationToken token)
         {
-            return ConnectAsync(host, port, password, securityTypes, null);
+            return ConnectAsync(host, port, password, securityTypes, null, token);
         }
 
-        public async Task ConnectAsync(string host, int port, string password, IEnumerable<SecurityType> securityTypes, MonitorSnippet? section)
+        public async Task<Task> ConnectAsync(string host, int port, string password, IEnumerable<SecurityType> securityTypes, MonitorSnippet? section, CancellationToken token)
         {
-            Client = await RfbConnection.ConnectAsync(host, port, password, securityTypes, section);
+            Client = await RfbConnection.ConnectAsync(host, port, password, securityTypes, section, token);
             Section = section;
             Client.OnVncUpdate += Client_OnVncUpdate;
             Client.OnResolutionUpdate += Client_OnResolutionUpdate;
-            Client.Start();
+            return Client.Start();
         }
 
         private void Client_OnResolutionUpdate(int framebufferWidth, int framebufferHeight)
@@ -160,6 +161,11 @@ namespace VncDotnet.WPF
                 return Section.Y;
             }
             return 0;
+        }
+
+        public void Dispose()
+        {
+            Client?.Stop();
         }
     }
 }
