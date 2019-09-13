@@ -35,7 +35,7 @@ namespace VncDotnet
         public static readonly SecurityType[] SupportedSecurityTypes = new SecurityType[] { SecurityType.None, SecurityType.VncAuthentication };
         public static readonly RfbEncoding[] SupportedEncodings = new RfbEncoding[] { RfbEncoding.ZRLE, RfbEncoding.Raw };
 
-        public static async Task<RfbConnection> ConnectAsync(string host, int port, string password, IEnumerable<SecurityType> securityTypes, MonitorSnippet? section, CancellationToken token)
+        public static async Task<RfbConnection> ConnectAsync(string host, int port, string? password, IEnumerable<SecurityType> securityTypes, MonitorSnippet? section, CancellationToken token)
         {
             var tcpClient = new TcpClient
             {
@@ -68,6 +68,8 @@ namespace VncDotnet
             }
             else if (securityType == SecurityType.VncAuthentication)
             {
+                if (password == null)
+                    throw new SecurityTypesMismatchException();
                 var challenge = await ParseSecurityChallengeAsync(incomingPacketsPipe.Reader, token);
                 await SendSecurityResponseAsync(tcpClient.Client, Utils.EncryptChallenge(password, challenge), token);
                 var securityResult = await ParseSecurityResultAsync(incomingPacketsPipe.Reader, token);
