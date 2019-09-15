@@ -136,7 +136,7 @@ namespace VncDotnet
                 BinaryPrimitives.ReadInt32BigEndian(span[8..12]));
         }
 
-        public async Task Loop()
+        private async Task Loop()
         {
             try
             {
