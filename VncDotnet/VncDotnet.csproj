@@ -9,6 +9,7 @@
     <RepositoryUrl>https://github.com/Trolldemorted/VncDotnet</RepositoryUrl>
     <PackageTags>vnc rfb</PackageTags>
     <PackageLicenseExpression>EUPL-1.2</PackageLicenseExpression>
+    <Version>1.0.1</Version>
   </PropertyGroup>
 
   <ItemGroup>
