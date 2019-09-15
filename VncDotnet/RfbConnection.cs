@@ -102,7 +102,14 @@ namespace VncDotnet
             BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(4, 2), y);
             BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(6, 2), width);
             BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(8, 2), height);
-            return Tcp.Client.SendAsync(buf, SocketFlags.None, token); //TODO ensure all bytes are sent
+            try
+            {
+                return Tcp.Client.SendAsync(buf, SocketFlags.None, token); //TODO ensure all bytes are sent
+            }
+            catch (Exception e)
+            {
+                throw new VncConnectionException("WriteFramebufferUpdateRequest failed", e);
+            }
         }
 
         private async Task<int> ParseFramebufferUpdateHeader(CancellationToken token)
