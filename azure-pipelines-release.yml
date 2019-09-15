@@ -41,8 +41,6 @@ steps:
   inputs:
     command: 'pack'
     searchPatternPack: '**/VncDotnet.csproj'
-    includesymbols: true
-    includesource: true
     nobuild: true
 
 - task: NuGetCommand@2

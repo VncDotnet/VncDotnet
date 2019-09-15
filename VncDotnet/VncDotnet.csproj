@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
@@ -10,6 +10,7 @@
     <PackageTags>vnc rfb</PackageTags>
     <PackageLicenseExpression>EUPL-1.2</PackageLicenseExpression>
     <IncludeSymbols>true</IncludeSymbols>
+    <IncludeSource>true</IncludeSource>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <Version>1.0.2</Version>
   </PropertyGroup>
