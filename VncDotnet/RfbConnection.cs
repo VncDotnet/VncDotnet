@@ -219,6 +219,8 @@ namespace VncDotnet
                     }
                 }
                 IncomingPacketsPipe.Reader.AdvanceTo(result.Buffer.GetPosition(read));
+                if (remaining > 0 && result.IsCompleted)
+                    throw new VncConnectionException();
             }
             Debug.WriteLine($"ParseServerCutText {builder.ToString()}");
         }

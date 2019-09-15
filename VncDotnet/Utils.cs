@@ -25,6 +25,8 @@ namespace VncDotnet
                     return result;
                 }
                 reader.AdvanceTo(result.Buffer.Start, result.Buffer.End);
+                if (result.IsCompleted)
+                    throw new VncConnectionException();
             }
         }
 
@@ -125,6 +127,8 @@ namespace VncDotnet
                     }
                 }
                 reader.AdvanceTo(result.Buffer.GetPosition(read));
+                if (elementCount > 0 && result.IsCompleted)
+                    throw new VncConnectionException();
             }
         }
     }

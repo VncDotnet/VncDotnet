@@ -68,6 +68,8 @@ namespace VncDotnet.Encodings
                     }
                 }
                 reader.AdvanceTo(result.Buffer.GetPosition(decompressed));
+                if (remaining > 0 && result.IsCompleted)
+                    throw new VncConnectionException();
             }
             ZRLEPipe.Writer.Complete();
             return await parser;
@@ -83,7 +85,7 @@ namespace VncDotnet.Encodings
                 for (var x = 0; x < header.Width; x += 64)
                 {
                     var tileWidth = Math.Min(header.Width - x, 64);
-                    var result = await uncompressedReader.ReadAsync();
+                    var result = await uncompressedReader.ReadMinBytesAsync(1, token);
                     byte subencoding = result.Buffer.First.Span[0];
                     uncompressedReader.AdvanceTo(result.Buffer.GetPosition(1));
                     //Debug.WriteLine($"subencoding {subencoding}");
@@ -167,6 +169,8 @@ namespace VncDotnet.Encodings
                 if (result.Buffer.Length < 4)
                 {
                     uncompressedReader.AdvanceTo(result.Buffer.Start, result.Buffer.End);
+                    if (result.IsCompleted)
+                        throw new VncConnectionException();
                     continue;
                 }
 
@@ -200,6 +204,8 @@ namespace VncDotnet.Encodings
                     }
                 }
                 uncompressedReader.AdvanceTo(result.Buffer.GetPosition(read));
+                if (tileLength > 0 && result.IsCompleted)
+                    throw new VncConnectionException();
             }
             Debug.Assert(tileLength == 0);
             ArrayPool<byte>.Shared.Return(pixel);
@@ -308,6 +314,8 @@ namespace VncDotnet.Encodings
                     }
                 }
                 uncompressedReader.AdvanceTo(result.Buffer.GetPosition(read));
+                if (remainingPixels > 0 && result.IsCompleted)
+                    throw new VncConnectionException();
             }
             Debug.Assert(remainingPixels == 0);
             ArrayPool<byte>.Shared.Return(palette);

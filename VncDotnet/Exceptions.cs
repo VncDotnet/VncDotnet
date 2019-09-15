@@ -9,6 +9,11 @@ namespace VncDotnet
 
     }
 
+    public class VncConnectionException : VncException
+    {
+
+    }
+
     public class VncConnectException : VncException
     {
 

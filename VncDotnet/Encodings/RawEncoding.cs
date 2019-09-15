@@ -73,6 +73,8 @@ namespace VncDotnet.Encodings
                     }
                 }
                 reader.AdvanceTo(result.Buffer.GetPosition(read));
+                if (remainingPixels > 0 && result.IsCompleted)
+                    throw new VncConnectionException();
             }
             return buf;
         }
