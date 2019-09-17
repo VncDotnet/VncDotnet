@@ -46,10 +46,15 @@ namespace VncDotnet
 
     public class MonitorSnippet
     {
-        public readonly ushort X;
-        public readonly ushort Y;
-        public readonly ushort Width;
-        public readonly ushort Height;
+        public ushort X { get; private set; }
+        public ushort Y { get; private set; }
+        public ushort Width { get; private set; }
+        public ushort Height { get; private set; }
+
+        public MonitorSnippet()
+        {
+
+        }
 
         public MonitorSnippet(ushort x, ushort y, ushort width, ushort height)
         {
