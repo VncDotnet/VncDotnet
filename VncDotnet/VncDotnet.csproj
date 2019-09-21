@@ -5,8 +5,8 @@
     <Nullable>enable</Nullable>
     <LangVersion>8.0</LangVersion>
     <Authors>Benedikt Radtke</Authors>
-    <PackageProjectUrl>https://github.com/Trolldemorted/VncDotnet</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/Trolldemorted/VncDotnet</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/VncDotnet/VncDotnet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/VncDotnet/VncDotnet</RepositoryUrl>
     <PackageTags>vnc rfb</PackageTags>
     <PackageLicenseExpression>EUPL-1.2</PackageLicenseExpression>
     <IncludeSymbols>true</IncludeSymbols>
