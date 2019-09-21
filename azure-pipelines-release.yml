@@ -24,14 +24,6 @@ steps:
   inputs:
     version: '3.0.100-preview9-014004'
 
-- task: CopyFiles@2
-  inputs:
-    sourceFolder: VncDotnet
-    targetFolder: '$(Build.ArtifactStagingDirectory)/src/VncDotnet'
-    contents: |
-      **\*.cs
-      **\*.csproj
-
 - task: DotNetCoreCLI@2
   inputs:
     command: 'build'
@@ -50,25 +42,6 @@ steps:
     command: 'pack'
     searchPatternPack: '**/VncDotnet.csproj'
     nobuild: true
-
-- powershell: $foo = ls $(Build.ArtifactStagingDirectory) | where { $_.Name.endswith(".snupkg") } | select -ExpandProperty Name; echo "##vso[task.setvariable variable=filename;isOutput=true]$foo"
-  name: SymbolsPackage
-
-- task: ArchiveFiles@2
-  inputs:
-    rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/src'
-    includeRootFolder: true
-    archiveType: 'zip'
-    archiveFile: '$(Build.ArtifactStagingDirectory)/$(SymbolsPackage.filename)'
-    replaceExistingArchive: false
-    verbose: true
-
-- task: ExtractFiles@1
-  inputs:
-    archiveFilePatterns: '$(Build.ArtifactStagingDirectory)/$(SymbolsPackage.filename)'
-    destinationFolder: '$(Build.ArtifactStagingDirectory)/final_snupkg'
-
-- script: tree /F $(Build.ArtifactStagingDirectory)
 
 - task: NuGetCommand@2
   inputs:
