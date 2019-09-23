@@ -234,9 +234,11 @@ namespace VncDotnet
 
                 if (result.IsCompleted)
                 {
+                    Debug.WriteLine("WriteToRfbPipeAsync stopping - reader is gone");
                     break;
                 }
             }
+            Debug.WriteLine("WriteToRfbPipeAsync finished");
             writer.Complete();
         }
     }
