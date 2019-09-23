@@ -70,7 +70,6 @@ namespace VncDotnet
         private readonly CancellationTokenSource CancelSource = new CancellationTokenSource();
         private readonly TcpClient Tcp;
         private readonly Pipe IncomingPacketsPipe;
-        private readonly ServerInitMessage ServerInitMessage;
         private readonly MonitorSnippet? Section;
         private readonly ZRLEEncoding ZRLEEncoding = new ZRLEEncoding();
         private readonly RawEncoding RawEncoding = new RawEncoding();
@@ -79,6 +78,11 @@ namespace VncDotnet
 
         public delegate void ResolutionUpdate(int framebufferWidth, int framebufferHeight);
         public event ResolutionUpdate? OnResolutionUpdate;
+
+        public ushort FramebufferWidth { get; private set; }
+        public ushort FramebufferHeight { get; private set; }
+        public PixelFormat PixelFormat { get; private set; }
+        public string Name { get; private set; }
 
         public Task Start()
         {
@@ -94,7 +98,10 @@ namespace VncDotnet
         {
             Tcp = client;
             IncomingPacketsPipe = pipe;
-            ServerInitMessage = serverInitMessage;
+            FramebufferWidth = serverInitMessage.FramebufferWidth;
+            FramebufferHeight = serverInitMessage.FramebufferHeight;
+            PixelFormat = serverInitMessage.PixelFormat;
+            Name = serverInitMessage.Name;
             Section = section;
         }
 
@@ -154,8 +161,8 @@ namespace VncDotnet
             {
                 ushort x = 0;
                 ushort y = 0;
-                ushort width = ServerInitMessage.FramebufferWidth;
-                ushort height = ServerInitMessage.FramebufferHeight;
+                ushort width = FramebufferWidth;
+                ushort height = FramebufferHeight;
                 if (Section != null)
                 {
                     x = Section.X;
@@ -181,10 +188,14 @@ namespace VncDotnet
                             var rectangles = new (RfbRectangleHeader, byte[])[rectanglesCount];
                             for (var i = 0; i < rectanglesCount; ++i)
                             {
-                                rectangles[i] = await ParseRectangle(ServerInitMessage.PixelFormat, CancelSource.Token);
+                                rectangles[i] = await ParseRectangle(PixelFormat, CancelSource.Token);
                             }
                             Debug.WriteLine($"{stopWatch.Elapsed} (ParseRectangles finished)");
                             OnVncUpdate?.Invoke(rectangles);
+                            foreach (var rect in rectangles)
+                            {
+                                ArrayPool<byte>.Shared.Return(rect.Item2);
+                            }
                             Debug.WriteLine($"{stopWatch.Elapsed} (OnVncUpdate finished)");
                             break;
                         case RfbServerMessageType.Bell:

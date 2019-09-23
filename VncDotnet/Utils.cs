@@ -128,7 +128,7 @@ namespace VncDotnet
                 }
                 reader.AdvanceTo(result.Buffer.GetPosition(read));
                 if (elementCount > 0 && result.IsCompleted)
-                    throw new VncConnectionException();
+                    throw new VncConnectionException("Elements are pending but pipe is closed");
             }
         }
     }
