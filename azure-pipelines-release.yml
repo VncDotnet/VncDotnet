@@ -20,9 +20,10 @@ variables:
 steps:
 - task: NuGetToolInstaller@1
 
-- task: DotNetCoreInstaller@1
+- task: UseDotNet@2
   inputs:
-    version: '3.0.100-preview9-014004'
+    packageType: 'sdk'
+    version: 3.x
 
 - task: DotNetCoreCLI@2
   inputs:
