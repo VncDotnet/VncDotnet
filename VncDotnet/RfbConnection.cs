@@ -15,6 +15,7 @@ using System.IO;
 using VncDotnet.Messages;
 using VncDotnet.Encodings;
 using System.Drawing;
+using System.Collections;
 
 namespace VncDotnet
 {
@@ -73,11 +74,8 @@ namespace VncDotnet
         private readonly MonitorSnippet? Section;
         private readonly ZRLEEncoding ZRLEEncoding = new ZRLEEncoding();
         private readonly RawEncoding RawEncoding = new RawEncoding();
-        public delegate void FramebufferUpdate(IEnumerable<(RfbRectangleHeader, byte[])> rectangles);
-        public event FramebufferUpdate? OnVncUpdate;
-
-        public delegate void ResolutionUpdate(int framebufferWidth, int framebufferHeight);
-        public event ResolutionUpdate? OnResolutionUpdate;
+        private readonly List<IVncHandler> Handlers = new List<IVncHandler>();
+        private readonly SemaphoreSlim Lock = new SemaphoreSlim(1, 1);
 
         public ushort FramebufferWidth { get; private set; }
         public ushort FramebufferHeight { get; private set; }
@@ -94,6 +92,45 @@ namespace VncDotnet
             CancelSource.Cancel();
         }
 
+        public async Task Attach(IVncHandler handler)
+        {
+            await Lock.WaitAsync();
+            try
+            {
+                Handlers.Add(handler);
+                ushort x = 0;
+                ushort y = 0;
+                ushort width = FramebufferWidth;
+                ushort height = FramebufferHeight;
+                if (Section != null)
+                {
+                    x = Section.X;
+                    y = Section.Y;
+                    width = Section.Width;
+                    height = Section.Height;
+                }
+                SendFramebufferUpdateRequest(x, y, width, height, false);
+                handler.HandleResolutionUpdate(width, height);
+            }
+            finally
+            {
+                Lock.Release();
+            }
+        }
+
+        public async Task Detach(IVncHandler handler)
+        {
+            await Lock.WaitAsync();
+            try
+            {
+                Handlers.Remove(handler);
+            }
+            finally
+            {
+                Lock.Release();
+            }
+        }
+
         public RfbConnection(TcpClient client, Pipe pipe, ServerInitMessage serverInitMessage, MonitorSnippet? section)
         {
             Tcp = client;
@@ -105,7 +142,7 @@ namespace VncDotnet
             Section = section;
         }
 
-        private ValueTask<int> WriteFramebufferUpdateRequest(ushort x, ushort y, ushort width, ushort height, bool incremental, CancellationToken token)
+        private int SendFramebufferUpdateRequest(ushort x, ushort y, ushort width, ushort height, bool incremental)
         {
             var buf = new byte[10];
             buf[0] = (byte) RfbClientMessageType.FramebufferUpdateRequest;
@@ -116,7 +153,7 @@ namespace VncDotnet
             BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(8, 2), height);
             try
             {
-                return Tcp.Client.SendAsync(buf, SocketFlags.None, token); //TODO ensure all bytes are sent
+                return Tcp.Client.Send(buf); //TODO ensure all bytes are sent
             }
             catch (Exception e)
             {
@@ -137,7 +174,6 @@ namespace VncDotnet
             ReadResult result = await IncomingPacketsPipe.Reader.ReadMinBytesAsync(12, token);
             var header = ParseRectangleHeader(result.Buffer.Slice(0, 12).ToArray());
             IncomingPacketsPipe.Reader.AdvanceTo(result.Buffer.GetPosition(12));
-            //Debug.WriteLine($"Rectangle {header}");
             return header.Encoding switch
             {
                 RfbEncoding.ZRLE => (header, await ZRLEEncoding.ParseRectangle(IncomingPacketsPipe.Reader, header, format, token)),
@@ -170,33 +206,28 @@ namespace VncDotnet
                     width = Section.Width;
                     height = Section.Height;
                 }
-                OnResolutionUpdate?.Invoke(width, height);
+                OnResolutionUpdate(width, height);
                 var stopWatch = new Stopwatch();
-                await WriteFramebufferUpdateRequest(x, y, width, height, false, CancelSource.Token);
+                SendFramebufferUpdateRequest(x, y, width, height, false);
                 while (!CancelSource.IsCancellationRequested)
                 {
                     stopWatch.Restart();
                     var messageType = (RfbServerMessageType)await IncomingPacketsPipe.Reader.ReadByteAsync(CancelSource.Token);
-                    Debug.WriteLine($"{stopWatch.Elapsed} (ParseServerMessageType finished)");
                     switch (messageType)
                     {
                         case RfbServerMessageType.FramebufferUpdate:
-                            await WriteFramebufferUpdateRequest(x, y, width, height, true, CancelSource.Token);
-                            Debug.WriteLine($"{stopWatch.Elapsed} (WriteFramebufferUpdateRequest finished)");
+                            SendFramebufferUpdateRequest(x, y, width, height, true);
                             var rectanglesCount = await ParseFramebufferUpdateHeader(CancelSource.Token);
-                            Debug.WriteLine($"{stopWatch.Elapsed} (ParseFramebufferUpdateHeader finished)");
                             var rectangles = new (RfbRectangleHeader, byte[])[rectanglesCount];
                             for (var i = 0; i < rectanglesCount; ++i)
                             {
                                 rectangles[i] = await ParseRectangle(PixelFormat, CancelSource.Token);
                             }
-                            Debug.WriteLine($"{stopWatch.Elapsed} (ParseRectangles finished)");
-                            OnVncUpdate?.Invoke(rectangles);
+                            OnFramebufferUpdate(rectangles);
                             foreach (var rect in rectangles)
                             {
                                 ArrayPool<byte>.Shared.Return(rect.Item2);
                             }
-                            Debug.WriteLine($"{stopWatch.Elapsed} (OnVncUpdate finished)");
                             break;
                         case RfbServerMessageType.Bell:
                             Debug.WriteLine($"BELL");
@@ -246,6 +277,52 @@ namespace VncDotnet
                     throw new VncConnectionException();
             }
             Debug.WriteLine($"ParseServerCutText {builder.ToString()}");
+        }
+
+        private void OnResolutionUpdate(ushort framebufferWidth, ushort framebufferHeight)
+        {
+            Lock.WaitAsync();
+            try
+            {
+                foreach (var handler in Handlers)
+                {
+                    try
+                    {
+                        handler.HandleResolutionUpdate(framebufferWidth, framebufferHeight);
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.WriteLine($"{e.Message}\n{e.StackTrace}");
+                    }
+                }
+            }
+            finally
+            {
+                Lock.Release();
+            }
+        }
+
+        private void OnFramebufferUpdate(IEnumerable<(RfbRectangleHeader, byte[])> rectangles)
+        {
+            Lock.Wait();
+            try
+            {
+                foreach (var handler in Handlers)
+                {
+                    try
+                    {
+                        handler.HandleFramebufferUpdate(rectangles);
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.WriteLine($"{e.Message}\n{e.StackTrace}");
+                    }
+                }
+            }
+            finally
+            {
+                Lock.Release();
+            }
         }
     }
 }
