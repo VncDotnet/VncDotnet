@@ -293,6 +293,7 @@ namespace VncDotnet.Encodings
                     if (TryParsePaletteRunLength(slice, out var index, out var length, out var byteLength))
                     {
                         remainingPixels -= length;
+                        Debug.Assert(remainingPixels >= 0);
                         read += byteLength;
                         for (int i = 0; i < length; i++)
                         {
@@ -342,13 +343,14 @@ namespace VncDotnet.Encodings
         private bool TryParsePaletteRunLength(ReadOnlySequence<byte> seq, out int index, out int length, out int byteLength)
         {
             length = 1;
-            byteLength = 1;
+            byteLength = 0;
             index = 0;
             foreach (var segment in seq)
             {
                 for (int i = 0; i < segment.Span.Length; i++)
                 {
                     var b = segment.Span[i];
+                    byteLength += 1;
                     if (byteLength == 1)
                     {
                         index = b & 127;
@@ -363,7 +365,6 @@ namespace VncDotnet.Encodings
                         if (b != byte.MaxValue)
                             return true;
                     }
-                    byteLength++;
                 }
             }
             return false;
